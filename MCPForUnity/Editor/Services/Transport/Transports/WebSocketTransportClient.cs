@@ -246,6 +246,19 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             _disposed = true;
         }
 
+        /// <summary>
+        /// A failed reconnect is a warning: the loop keeps retrying, and an error logged while a shared
+        /// server restarts fails every running test, in every connected Editor, that asserts a clean console.
+        /// A failed first connect stays an error.
+        /// </summary>
+        internal static void LogConnectFailure(string failure, bool isReconnect)
+        {
+            if (isReconnect)
+                McpLog.Warn(failure);
+            else
+                McpLog.Error(failure);
+        }
+
         private async Task<bool> EstablishConnectionAsync(CancellationToken token, bool isReconnect = false)
         {
             await StopConnectionLoopsAsync().ConfigureAwait(false);
@@ -292,13 +305,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             if (connectedEndpoint == null)
             {
                 string errorMsg = "Connection failed. Check that the server URL is correct, the server is running, and your API key (if required) is valid.";
-                // A failed reconnect is a warning: the loop keeps retrying, and an error logged while the
-                // shared server restarts fails every running test that asserts a clean console.
-                string failure = $"[WebSocket] {errorMsg} (Detail: {lastConnectError?.Message ?? "Unknown error"})";
-                if (isReconnect)
-                    McpLog.Warn(failure);
-                else
-                    McpLog.Error(failure);
+                LogConnectFailure($"[WebSocket] {errorMsg} (Detail: {lastConnectError?.Message ?? "Unknown error"})", isReconnect);
                 _state = TransportState.Disconnected(TransportDisplayName, errorMsg);
                 return false;
             }
