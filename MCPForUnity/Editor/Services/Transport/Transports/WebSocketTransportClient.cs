@@ -246,7 +246,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             _disposed = true;
         }
 
-        private async Task<bool> EstablishConnectionAsync(CancellationToken token)
+        private async Task<bool> EstablishConnectionAsync(CancellationToken token, bool isReconnect = false)
         {
             await StopConnectionLoopsAsync().ConfigureAwait(false);
 
@@ -292,7 +292,13 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             if (connectedEndpoint == null)
             {
                 string errorMsg = "Connection failed. Check that the server URL is correct, the server is running, and your API key (if required) is valid.";
-                McpLog.Error($"[WebSocket] {errorMsg} (Detail: {lastConnectError?.Message ?? "Unknown error"})");
+                // A failed reconnect is a warning: the loop keeps retrying, and an error logged while the
+                // shared server restarts fails every running test that asserts a clean console.
+                string failure = $"[WebSocket] {errorMsg} (Detail: {lastConnectError?.Message ?? "Unknown error"})";
+                if (isReconnect)
+                    McpLog.Warn(failure);
+                else
+                    McpLog.Error(failure);
                 _state = TransportState.Disconnected(TransportDisplayName, errorMsg);
                 return false;
             }
@@ -786,7 +792,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         catch (OperationCanceledException) { return; }
                     }
 
-                    if (await EstablishConnectionAsync(token).ConfigureAwait(false))
+                    if (await EstablishConnectionAsync(token, isReconnect: true).ConfigureAwait(false))
                     {
                         _state = TransportState.Connected(TransportDisplayName, sessionId: _sessionId, details: _endpointUri.ToString());
                         _isConnected = true;
@@ -804,7 +810,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     try { await Task.Delay(ReconnectTailInterval, token).ConfigureAwait(false); }
                     catch (OperationCanceledException) { return; }
 
-                    if (await EstablishConnectionAsync(token).ConfigureAwait(false))
+                    if (await EstablishConnectionAsync(token, isReconnect: true).ConfigureAwait(false))
                     {
                         _state = TransportState.Connected(TransportDisplayName, sessionId: _sessionId, details: _endpointUri.ToString());
                         _isConnected = true;
