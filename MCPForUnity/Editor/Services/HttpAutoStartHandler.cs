@@ -219,8 +219,9 @@ namespace MCPForUnity.Editor.Services
                         return;
                     }
 
-                    // Check if server is already reachable (e.g. user started it externally).
-                    if (!MCPServiceLocator.Server.IsLocalHttpServerReachable())
+                    if (ShouldLaunchLocalServer(
+                            EditorPrefs.GetBool(EditorPrefKeys.AutoStartConnectOnly, false),
+                            MCPServiceLocator.Server.IsLocalHttpServerReachable))
                     {
                         bool serverStarted = MCPServiceLocator.Server.StartLocalHttpServer(quiet: true);
                         if (!serverStarted)
@@ -249,6 +250,19 @@ namespace MCPForUnity.Editor.Services
                 // mid-flight skips this, leaving the key set for the reconnect path.
                 SessionState.EraseBool(ConnectPendingKey);
             }
+        }
+
+        /// <summary>
+        /// Whether auto-start launches the local server before connecting. Connect-only never does:
+        /// the server is managed outside Unity and shared with other Editors, and a reachability probe
+        /// that is merely slow on a busy machine must not launch a second one, because launching first
+        /// stops whatever server holds the port. Otherwise launch only when nothing answers (a server
+        /// the user started externally is reused).
+        /// </summary>
+        internal static bool ShouldLaunchLocalServer(bool connectOnly, Func<bool> isServerReachable)
+        {
+            if (connectOnly) return false;
+            return !isServerReachable();
         }
 
         /// <summary>

@@ -1,5 +1,6 @@
 using System;
 using System.Threading.Tasks;
+using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services.Transport;
 using UnityEditor;
@@ -57,6 +58,8 @@ namespace MCPForUnity.Editor.Services
             // StopManagedLocalHttpServer only stops the server matching our pidfile+instance-token handshake,
             // so it never touches servers launched by other Unity instances. This runs on quit only;
             // domain reloads must NOT stop the server (and don't — this handler is gated on EditorApplication.quitting).
+            // Connect-only Editors never own the server, so they never stop one.
+            if (EditorPrefs.GetBool(EditorPrefKeys.AutoStartConnectOnly, false)) return;
             try
             {
                 MCPServiceLocator.Server.StopManagedLocalHttpServer();

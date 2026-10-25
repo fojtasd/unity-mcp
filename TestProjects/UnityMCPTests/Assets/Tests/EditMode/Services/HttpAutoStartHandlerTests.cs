@@ -190,5 +190,27 @@ namespace MCPForUnityTests.Editor.Services
             Assert.IsFalse(ConnectPendingSet);
             Assert.AreEqual(1, _fakeClient.StartCalls, "an already-running bridge must not be restarted");
         }
+
+        [Test]
+        public void ShouldLaunchLocalServer_ConnectOnly_NeverLaunchesNorProbes()
+        {
+            // A probe that is merely slow on a busy machine must not launch a server, because
+            // launching first stops the shared server another Editor and its clients rely on.
+            bool probed = false;
+            Assert.IsFalse(HttpAutoStartHandler.ShouldLaunchLocalServer(true, () => { probed = true; return false; }));
+            Assert.IsFalse(probed);
+        }
+
+        [Test]
+        public void ShouldLaunchLocalServer_NothingAnswers_Launches()
+        {
+            Assert.IsTrue(HttpAutoStartHandler.ShouldLaunchLocalServer(false, () => false));
+        }
+
+        [Test]
+        public void ShouldLaunchLocalServer_ServerAnswers_ReusesIt()
+        {
+            Assert.IsFalse(HttpAutoStartHandler.ShouldLaunchLocalServer(false, () => true));
+        }
     }
 }

@@ -25,6 +25,7 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
         private Button browseGitUrlButton;
         private Button clearGitUrlButton;
         private Toggle autoStartOnLoadToggle;
+        private Toggle autoStartConnectOnlyToggle;
         private Toggle debugLogsToggle;
         private Toggle logRecordToggle;
         private Toggle devModeForceRefreshToggle;
@@ -71,6 +72,7 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
             browseGitUrlButton = Root.Q<Button>("browse-git-url-button");
             clearGitUrlButton = Root.Q<Button>("clear-git-url-button");
             autoStartOnLoadToggle = Root.Q<Toggle>("auto-start-on-load-toggle");
+            autoStartConnectOnlyToggle = Root.Q<Toggle>("auto-start-connect-only-toggle");
             debugLogsToggle = Root.Q<Toggle>("debug-logs-toggle");
             logRecordToggle = Root.Q<Toggle>("log-record-toggle");
             devModeForceRefreshToggle = Root.Q<Toggle>("dev-mode-force-refresh-toggle");
@@ -177,6 +179,15 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
                 autoStartOnLoadToggle.SetValueWithoutNotify(EditorPrefs.GetBool(EditorPrefKeys.AutoStartOnLoad, false));
             }
 
+            if (autoStartConnectOnlyToggle != null)
+            {
+                autoStartConnectOnlyToggle.tooltip = "With Auto-Start on, only connect to a local HTTP server managed outside Unity: never launch one and never stop one, on load or on quit. Use it when several Editors share one server.";
+                var connectOnlyLabel = autoStartConnectOnlyToggle.parent?.Q<Label>();
+                if (connectOnlyLabel != null)
+                    connectOnlyLabel.tooltip = autoStartConnectOnlyToggle.tooltip;
+                autoStartConnectOnlyToggle.SetValueWithoutNotify(EditorPrefs.GetBool(EditorPrefKeys.AutoStartConnectOnly, false));
+            }
+
             gitUrlOverride.value = EditorPrefs.GetString(EditorPrefKeys.GitUrlOverride, "");
 
             bool debugEnabled = EditorPrefs.GetBool(EditorPrefKeys.DebugLogs, false);
@@ -252,6 +263,14 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
                 autoStartOnLoadToggle.RegisterValueChangedCallback(evt =>
                 {
                     EditorPrefs.SetBool(EditorPrefKeys.AutoStartOnLoad, evt.newValue);
+                });
+            }
+
+            if (autoStartConnectOnlyToggle != null)
+            {
+                autoStartConnectOnlyToggle.RegisterValueChangedCallback(evt =>
+                {
+                    EditorPrefs.SetBool(EditorPrefKeys.AutoStartConnectOnly, evt.newValue);
                 });
             }
 
@@ -401,6 +420,8 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
             gitUrlOverride.value = EditorPrefs.GetString(EditorPrefKeys.GitUrlOverride, "");
             if (autoStartOnLoadToggle != null)
                 autoStartOnLoadToggle.value = EditorPrefs.GetBool(EditorPrefKeys.AutoStartOnLoad, false);
+            if (autoStartConnectOnlyToggle != null)
+                autoStartConnectOnlyToggle.value = EditorPrefs.GetBool(EditorPrefKeys.AutoStartConnectOnly, false);
             debugLogsToggle.value = EditorPrefs.GetBool(EditorPrefKeys.DebugLogs, false);
             if (logRecordToggle != null)
                 logRecordToggle.value = McpLogRecord.IsEnabled;
