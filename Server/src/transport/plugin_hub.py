@@ -291,15 +291,20 @@ class PluginHub(WebSocketEndpoint):
         # Compute a per-command timeout:
         # - fast-path commands: short timeout (encourage retry)
         # - long-running commands: allow caller to request a longer timeout via params
-        unity_timeout_s = float(cls.COMMAND_TIMEOUT)
-        server_wait_s = float(cls.COMMAND_TIMEOUT)
+        # Both defaults can be raised for a busy machine (several Editors compiling and importing at
+        # once), where an Editor that is merely slow would otherwise fail commands at the default.
+        command_timeout_s = max(1.0, _read_bounded_wait_env(
+            "UNITY_MCP_COMMAND_TIMEOUT_S", default_s=float(cls.COMMAND_TIMEOUT), max_s=3600.0))
+        unity_timeout_s = command_timeout_s
+        server_wait_s = command_timeout_s
         if command_type == "blender_bridge":
             # The socket's default is 180s even when the caller omits the field.
             # Importing/placing its result in Unity happens after that socket call.
             unity_timeout_s = blender_command_timeout(params)
             server_wait_s = unity_timeout_s + SERVER_RESPONSE_GRACE
         elif command_type in cls._FAST_FAIL_COMMANDS:
-            fast_timeout = float(cls.FAST_FAIL_TIMEOUT)
+            fast_timeout = max(0.5, _read_bounded_wait_env(
+                "UNITY_MCP_FAST_FAIL_TIMEOUT_S", default_s=float(cls.FAST_FAIL_TIMEOUT), max_s=120.0))
             unity_timeout_s = fast_timeout
             server_wait_s = fast_timeout
         else:
