@@ -44,6 +44,8 @@ namespace MCPForUnityTests.Editor.Services.Server
             try { EditorPrefs.DeleteKey(EditorPrefKeys.LastLocalHttpServerPidArgsHash); } catch { }
             try { EditorPrefs.DeleteKey(EditorPrefKeys.LastLocalHttpServerPidFilePath); } catch { }
             try { EditorPrefs.DeleteKey(EditorPrefKeys.LastLocalHttpServerInstanceToken); } catch { }
+            // The manager keeps its own keys scoped to this project.
+            _manager?.ClearTracking();
         }
 
         #region GetPidFilePath Tests
@@ -280,6 +282,26 @@ namespace MCPForUnityTests.Editor.Services.Server
             Assert.IsFalse(result);
             Assert.IsNull(pidFilePath);
             Assert.IsNull(instanceToken);
+        }
+
+        [Test]
+        public void TryGetHandshake_UnscopedHandshake_IsNotThisProjects()
+        {
+            // Regression for #1299: EditorPrefs are shared by every Editor of one Unity version, so a
+            // handshake under the unscoped keys may be another Editor's server; quitting must not stop it.
+            EditorPrefs.SetString(EditorPrefKeys.LastLocalHttpServerPidFilePath, "/other/project/mcp_http_8080.pid");
+            EditorPrefs.SetString(EditorPrefKeys.LastLocalHttpServerInstanceToken, "other-editors-token");
+
+            Assert.IsFalse(_manager.TryGetHandshake(out _, out _));
+        }
+
+        [Test]
+        public void StoreHandshake_LeavesTheUnscopedKeysAlone()
+        {
+            _manager.StoreHandshake("/test/path.pid", "test-token-123");
+
+            Assert.IsFalse(EditorPrefs.HasKey(EditorPrefKeys.LastLocalHttpServerPidFilePath));
+            Assert.IsFalse(EditorPrefs.HasKey(EditorPrefKeys.LastLocalHttpServerInstanceToken));
         }
 
         [Test]
