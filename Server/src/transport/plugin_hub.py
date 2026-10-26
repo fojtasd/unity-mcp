@@ -139,10 +139,12 @@ class PluginHub(WebSocketEndpoint):
     _FAST_FAIL_COMMANDS: set[str] = {
         "read_console", "get_editor_state", "ping"}
     # Read-only commands that are safe to send again. One caught by a domain reload (its plugin
-    # session drops while the command is in flight) is sent once more to the reconnected session
-    # instead of failing; a command that changes the project is never repeated.
+    # session drops while the command is in flight) is sent again to the reconnected session
+    # instead of failing; a command that changes the project is never repeated. Reloads come in
+    # runs (a compile, then a package resolve), so a resend may be dropped by the next one.
     _RELOAD_RETRY_COMMANDS: set[str] = {
         "get_test_job", "read_console", "get_editor_state"}
+    _RELOAD_RETRY_RESENDS = 2
 
     _registry: PluginRegistry | None = None
     _mcp: FastMCP | None = None
@@ -1031,14 +1033,17 @@ class PluginHub(WebSocketEndpoint):
         """
         result = await cls._send_command_for_instance_once(
             unity_instance, command_type, params, user_id, retry_on_reload)
-        if (
+        resends = 0
+        while (
             retry_on_reload
             and command_type in cls._RELOAD_RETRY_COMMANDS
+            and resends < cls._RELOAD_RETRY_RESENDS
             and cls._is_plugin_disconnect(result)
         ):
+            resends += 1
             logger.info(
-                "Sending read-only '%s' again: its plugin session dropped mid-command (domain reload)",
-                command_type,
+                "Sending read-only '%s' again (%d/%d): its plugin session dropped mid-command (domain reload)",
+                command_type, resends, cls._RELOAD_RETRY_RESENDS,
             )
             result = await cls._send_command_for_instance_once(
                 unity_instance, command_type, params, user_id, retry_on_reload)

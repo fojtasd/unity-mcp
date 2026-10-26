@@ -19,7 +19,7 @@ DONE = {"success": True, "data": {"status": "succeeded"}}
 def hub(monkeypatch):
     """PluginHub with sessions resolved to fresh ids and no readiness probe; returns the resolve mock."""
     monkeypatch.setenv("UNITY_MCP_SESSION_READY_WAIT_SECONDS", "0")
-    resolve = AsyncMock(side_effect=["sess-before-reload", "sess-after-reload", "sess-third"])
+    resolve = AsyncMock(side_effect=["sess-before-reload", "sess-after-reload", "sess-third", "sess-fourth"])
     monkeypatch.setattr(PluginHub, "_resolve_session_id", resolve)
     monkeypatch.setattr(PluginHub, "_ensure_live_connection", AsyncMock(return_value=True))
     return resolve
@@ -55,13 +55,23 @@ async def test_a_command_that_changes_the_project_is_never_repeated(hub, monkeyp
 
 
 @pytest.mark.asyncio
-async def test_it_is_sent_again_only_once(hub, monkeypatch):
+async def test_a_resend_dropped_by_the_next_reload_is_sent_again(hub, monkeypatch):
     send = _unity(monkeypatch, DROPPED, DROPPED, DONE)
 
     result = await PluginHub.send_command_for_instance("Project@hash", "get_test_job", {})
 
+    assert result == DONE
+    assert send.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_it_gives_up_after_two_resends(hub, monkeypatch):
+    send = _unity(monkeypatch, DROPPED, DROPPED, DROPPED, DONE)
+
+    result = await PluginHub.send_command_for_instance("Project@hash", "get_test_job", {})
+
     assert result == DROPPED
-    assert send.await_count == 2
+    assert send.await_count == 3
 
 
 @pytest.mark.asyncio
