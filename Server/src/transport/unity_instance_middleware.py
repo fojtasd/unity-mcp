@@ -120,6 +120,8 @@ class UnityInstanceMiddleware(Middleware):
     _ACTIVE_INSTANCE_STATE_KEY = "mcpforunity.active_instance"
     # The client's root folders (file paths), asked once per MCP session; [] when it has none.
     _CLIENT_ROOTS_STATE_KEY = "mcpforunity.client_roots"
+    # The instances a session was last told it must choose among: said once, not on every call.
+    _MULTIPLE_NOTED_STATE_KEY = "mcpforunity.multiple_instances_noted"
 
     def __init__(self):
         super().__init__()
@@ -156,6 +158,21 @@ class UnityInstanceMiddleware(Middleware):
         ``delete_state``.
         """
         await ctx.set_state(self._ACTIVE_INSTANCE_STATE_KEY, None)
+
+    async def _note_multiple_instances(self, ctx, ids: list[str]) -> None:
+        """Log that a session must choose its instance, once per session and set of instances."""
+        noted = ", ".join(sorted(ids))
+        try:
+            if await ctx.get_state(self._MULTIPLE_NOTED_STATE_KEY) == noted:
+                return
+            await ctx.set_state(self._MULTIPLE_NOTED_STATE_KEY, noted)
+        except Exception:  # a context without state: say it every time, as before
+            pass
+        logger.info(
+            "Multiple Unity instances found (%d). Pass unity_instance on any tool call "
+            "or call set_active_instance to choose one. Available: %s",
+            len(ids), ", ".join(ids),
+        )
 
     async def _discover_instances(self, ctx) -> list:
         """
@@ -321,11 +338,7 @@ class UnityInstanceMiddleware(Middleware):
                                 chosen, ", ".join(roots),
                             )
                             return chosen
-                        logger.info(
-                            "Multiple Unity instances found (%d). Pass unity_instance on any tool call "
-                            "or call set_active_instance to choose one. Available: %s",
-                            len(ids), ", ".join(ids),
-                        )
+                        await self._note_multiple_instances(ctx, ids)
                 except (ConnectionError, ValueError, KeyError, TimeoutError, AttributeError) as exc:
                     logger.debug(
                         "PluginHub auto-select probe failed (%s); falling back to stdio",

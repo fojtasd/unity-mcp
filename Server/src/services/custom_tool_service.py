@@ -338,14 +338,20 @@ class CustomToolService:
         # are enabled. Project-scoped tools can override globals by name, but
         # disabling globals entirely would break shared tooling that projects expect.
         builtin_names = self._get_builtin_tool_names()
+        skipped: list[str] = []
         for tool in tools:
             if tool.name in builtin_names:
-                logger.info(
-                    "Skipping global custom tool registration for built-in tool '%s'",
-                    tool.name,
-                )
+                skipped.append(tool.name)
                 continue
             self._register_global_tool(tool)
+        # Every plugin registration (each domain reload) sends the built-in tools again: one line
+        # for all of them, not one per tool.
+        if skipped:
+            logger.info(
+                "Skipping global custom tool registration for %d built-in tools",
+                len(skipped),
+            )
+            logger.debug("Skipped built-in tools: %s", ", ".join(skipped))
 
     def _get_builtin_tool_names(self) -> set[str]:
         return {tool["name"] for tool in get_registered_tools()}
