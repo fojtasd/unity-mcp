@@ -5,8 +5,11 @@ This middleware intercepts all tool calls and injects the active Unity instance
 into the request-scoped state, allowing tools to access it via ctx.get_state("unity_instance").
 """
 from threading import RLock
+import asyncio
+import hashlib
 import logging
 import time
+from urllib.parse import unquote, urlparse
 
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 
@@ -17,6 +20,64 @@ from transport.plugin_hub import PluginHub
 logger = logging.getLogger("mcp-for-unity-server")
 # Separate logger that propagates to root -> stderr so diagnostics show in console
 _diag = logging.getLogger("transport.unity_instance_middleware")
+
+# How long a client gets to answer roots/list before the root match is skipped for the call.
+_ROOTS_TIMEOUT_S = 3.0
+
+
+def root_uri_to_path(uri: str) -> str | None:
+    """'file:///C:/DEV/My%20Game' -> 'C:/DEV/My Game' (forward slashes, no trailing slash)."""
+    parsed = urlparse(str(uri))
+    if parsed.scheme != "file":
+        return None
+    path = unquote(parsed.path)
+    # file:///C:/x has path '/C:/x'; a UNC root keeps its host.
+    if len(path) >= 3 and path[0] == "/" and path[2] == ":":
+        path = path[1:]
+    elif parsed.netloc:
+        path = f"//{parsed.netloc}{path}"
+    path = path.replace("\\", "/").rstrip("/")
+    return path or None
+
+
+def project_hashes_for_path(path: str) -> list[str]:
+    """The Unity project hashes a client working in ``path`` could belong to, innermost first.
+
+    The plugin names its project by the first 16 hex digits of SHA1(Application.dataPath), and
+    dataPath is the project folder plus '/Assets' with forward slashes. A client may work in the
+    project folder or below it, so every ancestor is a candidate; the drive letter is tried in
+    both cases because a root URI and Unity may spell it differently.
+    """
+    parts = path.replace("\\", "/").rstrip("/").split("/")
+    hashes: list[str] = []
+    for end in range(len(parts), 0, -1):
+        folder = "/".join(parts[:end])
+        if not folder or folder.endswith(":"):
+            break
+        variants = [folder]
+        if len(folder) >= 2 and folder[1] == ":":
+            variants += [folder[0].upper() + folder[1:], folder[0].lower() + folder[1:]]
+        for variant in dict.fromkeys(variants):
+            digest = hashlib.sha1(f"{variant}/Assets".encode("utf-8")).hexdigest()[:16]
+            if digest not in hashes:
+                hashes.append(digest)
+    return hashes
+
+
+def select_instance_by_roots(root_paths: list[str], instances: list[tuple[str, str]]) -> str | None:
+    """The instance id (Name@hash) whose project holds one of the client's roots, if exactly one does.
+
+    ``instances`` are (id, hash) pairs. The innermost project wins for each root.
+    """
+    by_hash = {h.lower(): inst_id for inst_id, h in instances if h}
+    chosen: set[str] = set()
+    for root in root_paths:
+        for candidate in project_hashes_for_path(root):
+            if candidate in by_hash:
+                chosen.add(by_hash[candidate])
+                break
+    return chosen.pop() if len(chosen) == 1 else None
+
 
 # Store a global reference to the middleware instance so tools can interact
 # with it to set or clear the active unity instance.
@@ -57,6 +118,8 @@ class UnityInstanceMiddleware(Middleware):
 
     # Key used in FastMCP's session-scoped state store for the active instance.
     _ACTIVE_INSTANCE_STATE_KEY = "mcpforunity.active_instance"
+    # The client's root folders (file paths), asked once per MCP session; [] when it has none.
+    _CLIENT_ROOTS_STATE_KEY = "mcpforunity.client_roots"
 
     def __init__(self):
         super().__init__()
@@ -245,6 +308,19 @@ class UnityInstanceMiddleware(Middleware):
                         )
                         return chosen
                     if len(ids) > 1:
+                        # Several Editors: pick the one whose project holds the client's working
+                        # folder, so a session keeps its Editor across server restarts without
+                        # calling set_active_instance.
+                        roots = await self._client_root_paths(ctx)
+                        pairs = [(i, i.rsplit("@", 1)[-1]) for i in ids]
+                        chosen = select_instance_by_roots(roots, pairs) if roots else None
+                        if chosen:
+                            await self.set_active_instance(ctx, chosen)
+                            logger.info(
+                                "Auto-selected Unity instance %s from the client's root %s",
+                                chosen, ", ".join(roots),
+                            )
+                            return chosen
                         logger.info(
                             "Multiple Unity instances found (%d). Pass unity_instance on any tool call "
                             "or call set_active_instance to choose one. Available: %s",
@@ -312,6 +388,37 @@ class UnityInstanceMiddleware(Middleware):
             )
 
         return None
+
+    async def _client_root_paths(self, ctx) -> list[str]:
+        """The client's root folders as paths, asked once per MCP session (MCP roots/list).
+
+        A client that declares no roots capability, or does not answer in time, gives [];
+        a timeout is not remembered, so a later call asks again.
+        """
+        get_state = getattr(ctx, "get_state", None)
+        if callable(get_state):
+            cached = await get_state(self._CLIENT_ROOTS_STATE_KEY)
+            if cached is not None:
+                return list(cached)
+        session = getattr(ctx, "session", None)
+        params = getattr(session, "client_params", None)
+        capabilities = getattr(params, "capabilities", None)
+        if getattr(capabilities, "roots", None) is None:
+            paths: list[str] = []
+            logger.info("Client declares no MCP roots; it picks its Unity instance with set_active_instance")
+        else:
+            try:
+                roots = await asyncio.wait_for(ctx.list_roots(), timeout=_ROOTS_TIMEOUT_S)
+            except Exception as exc:
+                if isinstance(exc, (SystemExit, KeyboardInterrupt)):
+                    raise
+                logger.info("Client roots unavailable (%s); trying again on the next call", type(exc).__name__)
+                return []
+            paths = [p for p in (root_uri_to_path(str(r.uri)) for r in roots) if p]
+        set_state = getattr(ctx, "set_state", None)
+        if callable(set_state):
+            await set_state(self._CLIENT_ROOTS_STATE_KEY, paths)
+        return paths
 
     async def _resolve_user_id(self) -> str | None:
         """Extract user_id from the current HTTP request's API key."""
