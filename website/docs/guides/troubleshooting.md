@@ -263,7 +263,7 @@ launches the shared server, then restart it:
 
 | Variable | Default | Maximum | Applies to |
 |---|---|---|---|
-| `UNITY_MCP_COMMAND_TIMEOUT_S` | 30 | 3600 | every command without its own `timeout_seconds` |
+| `UNITY_MCP_COMMAND_TIMEOUT_S` | 30 | 3600 | every other command without its own `timeout_seconds` (`blender_bridge` keeps its own budget) |
 | `UNITY_MCP_FAST_FAIL_TIMEOUT_S` | 2 | 120 | `read_console`, `get_editor_state`, `ping` |
 
 A command that asks for a longer `timeout_seconds` still gets it. Values above the

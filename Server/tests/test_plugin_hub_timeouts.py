@@ -1,5 +1,6 @@
 """The command and fast-fail timeouts PluginHub sends to Unity, and their env overrides."""
 import asyncio
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -78,3 +79,30 @@ class TestFastFailTimeout:
     def test_env_above_the_ceiling_is_clamped(self, monkeypatch):
         env = {"UNITY_MCP_FAST_FAIL_TIMEOUT_S": "500"}
         assert _send("read_console", {}, env, monkeypatch) == (120.0, 120.0)
+
+    def test_nan_keeps_the_default(self, monkeypatch):
+        env = {"UNITY_MCP_FAST_FAIL_TIMEOUT_S": "nan"}
+        assert _send("read_console", {}, env, monkeypatch) == (2.0, 2.0)
+
+
+class TestReadinessProbe:
+    @pytest.mark.asyncio
+    async def test_a_ping_never_outlasts_the_readiness_budget(self, monkeypatch):
+        # A raised fast-fail timeout lets one ping wait long; the readiness wait must still end on time.
+        monkeypatch.setenv("UNITY_MCP_SESSION_READY_WAIT_SECONDS", "0.3")
+        monkeypatch.setenv("UNITY_MCP_FAST_FAIL_TIMEOUT_S", "120")
+
+        async def silent_unity(_session_id, _command, _params):
+            await asyncio.sleep(60)
+
+        monkeypatch.setattr(PluginHub, "_resolve_session_id", AsyncMock(return_value="sess-busy"))
+        monkeypatch.setattr(PluginHub, "_ensure_live_connection", AsyncMock(return_value=True))
+        monkeypatch.setattr(PluginHub, "send_command", silent_unity)
+
+        started = time.monotonic()
+        result = await PluginHub.send_command_for_instance(
+            unity_instance="Project@hash-busy", command_type="read_console", params={})
+
+        assert time.monotonic() - started < 2.0
+        assert result["success"] is False
+        assert "ping not answered" in result["error"]
