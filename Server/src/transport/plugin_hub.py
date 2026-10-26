@@ -138,6 +138,11 @@ class PluginHub(WebSocketEndpoint):
     # or is throttled while unfocused.
     _FAST_FAIL_COMMANDS: set[str] = {
         "read_console", "get_editor_state", "ping"}
+    # Read-only commands that are safe to send again. One caught by a domain reload (its plugin
+    # session drops while the command is in flight) is sent once more to the reconnected session
+    # instead of failing; a command that changes the project is never repeated.
+    _RELOAD_RETRY_COMMANDS: set[str] = {
+        "get_test_job", "read_console", "get_editor_state"}
 
     _registry: PluginRegistry | None = None
     _mcp: FastMCP | None = None
@@ -363,7 +368,10 @@ class PluginHub(WebSocketEndpoint):
                 result = await asyncio.wait_for(future, timeout=server_wait_s)
                 return result
             except PluginDisconnectedError as exc:
-                return MCPResponse(success=False, error=str(exc), hint="retry").model_dump()
+                return MCPResponse(
+                    success=False, error=str(exc), hint="retry",
+                    data={"reason": "plugin_disconnected"},
+                ).model_dump()
             except asyncio.TimeoutError:
                 if command_type in cls._FAST_FAIL_COMMANDS:
                     return MCPResponse(
@@ -1021,6 +1029,35 @@ class PluginHub(WebSocketEndpoint):
             user_id: User ID for session isolation in remote-hosted mode
             retry_on_reload: If False, do not wait for session reconnect on reload.
         """
+        result = await cls._send_command_for_instance_once(
+            unity_instance, command_type, params, user_id, retry_on_reload)
+        if (
+            retry_on_reload
+            and command_type in cls._RELOAD_RETRY_COMMANDS
+            and cls._is_plugin_disconnect(result)
+        ):
+            logger.info(
+                "Sending read-only '%s' again: its plugin session dropped mid-command (domain reload)",
+                command_type,
+            )
+            result = await cls._send_command_for_instance_once(
+                unity_instance, command_type, params, user_id, retry_on_reload)
+        return result
+
+    @staticmethod
+    def _is_plugin_disconnect(result: Any) -> bool:
+        data = result.get("data") if isinstance(result, dict) else None
+        return isinstance(data, dict) and data.get("reason") == "plugin_disconnected"
+
+    @classmethod
+    async def _send_command_for_instance_once(
+        cls,
+        unity_instance: str | None,
+        command_type: str,
+        params: dict[str, Any],
+        user_id: str | None,
+        retry_on_reload: bool,
+    ) -> dict[str, Any]:
         try:
             session_id = await cls._resolve_session_id(
                 unity_instance,
